@@ -1,78 +1,95 @@
 const express = require('express')
 const router = express.Router()
-const bcrypt = require('bcryptjs')
-const jwt = require('jsonwebtoken')
-const User = require('../models/User')
+const Todo = require('../models/Todo')
+const protect = require('../middleware/authMiddleware')
 
-// Generate JWT Token
-const generateToken = (id) => {
-  return jwt.sign({ id }, process.env.JWT_SECRET, {
-    expiresIn: '7d'
-  })
-}
-
-// @route   POST /api/auth/register
-// @desc    Register a new user
-router.post('/register', async (req, res) => {
-  const { name, email, password } = req.body
+router.post('/', protect, async (req, res) => {
+  const { title, description, priority } = req.body
 
   try {
-    // Check if user already exists
-    const userExists = await User.findOne({ email })
-    if(userExists){
-      return res.status(400).json({ message: 'User already exists' })
-    }
-
-    // Hash password
-    const salt = await bcrypt.genSalt(10)
-    const hashedPassword = await bcrypt.hash(password, salt)
-
-    // Create user
-    const user = await User.create({
-      name,
-      email,
-      password: hashedPassword
+    const todo = await Todo.create({
+      user: req.user.id,
+      title,
+      description,
+      priority
     })
 
-    // Send response
-    res.status(201).json({
-      _id: user._id,
-      name: user.name,
-      email: user.email,
-      token: generateToken(user._id)
-    })
-
+    res.status(201).json(todo)
   } catch (error) {
     res.status(500).json({ message: 'Server error', error: error.message })
   }
 })
 
-// @route   POST /api/auth/login
-// @desc    Login user
-router.post('/login', async (req, res) => {
-  const { email, password } = req.body
-
+router.get('/', protect, async (req, res) => {
   try {
-    // Find user by email
-    const user = await User.findOne({ email })
-    if(!user){
-      return res.status(400).json({ message: 'Invalid credentials' })
+    const todos = await Todo.find({ user: req.user.id }).sort({ createdAt: -1 })
+    res.status(200).json(todos)
+  } catch (error) {
+    res.status(500).json({ message: 'Server error', error: error.message })
+  }
+})
+
+
+router.put('/:id', protect, async (req, res) => {
+  try {
+    const todo = await Todo.findById(req.params.id)
+
+    if(!todo){
+      return res.status(404).json({ message: 'Todo not found' })
     }
 
-    // Check password
-    const isMatch = await bcrypt.compare(password, user.password)
-    if(!isMatch){
-      return res.status(400).json({ message: 'Invalid credentials' })
+    // Make sure user owns the todo
+    if(todo.user.toString() !== req.user.id){
+      return res.status(401).json({ message: 'Not authorized' })
     }
 
-    // Send response
-    res.status(200).json({
-      _id: user._id,
-      name: user.name,
-      email: user.email,
-      token: generateToken(user._id)
-    })
+    const updatedTodo = await Todo.findByIdAndUpdate(
+      req.params.id,
+      req.body,
+      { new: true }
+    )
 
+    res.status(200).json(updatedTodo)
+  } catch (error) {
+    res.status(500).json({ message: 'Server error', error: error.message })
+  }
+})
+
+router.delete('/:id', protect, async (req, res) => {
+  try {
+    const todo = await Todo.findById(req.params.id)
+
+    if(!todo){
+      return res.status(404).json({ message: 'Todo not found' })
+    }
+
+    if(todo.user.toString() !== req.user.id){
+      return res.status(401).json({ message: 'Not authorized' })
+    }
+
+    await todo.deleteOne()
+    res.status(200).json({ message: 'Todo deleted successfully' })
+  } catch (error) {
+    res.status(500).json({ message: 'Server error', error: error.message })
+  }
+})
+
+router.patch('/:id/complete', protect, async (req, res) => {
+  try {
+    const todo = await Todo.findById(req.params.id)
+
+    if(!todo){
+      return res.status(404).json({ message: 'Todo not found' })
+    }
+
+    if(todo.user.toString() !== req.user.id){
+      return res.status(401).json({ message: 'Not authorized' })
+    }
+
+    todo.completed = !todo.completed
+    await todo.save()
+
+    res.status(200).json(todo)
   } catch (error) {
     res.status(500).json({ message: 'Server error', error: error.message })
   }
